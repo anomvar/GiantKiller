@@ -1,0 +1,493 @@
+/* ============================================================
+   PROJECT JARVIS — GridSentinel Holographic Command Center
+   Aesthetic: deep-space black, hologram cyan #00f0ff,
+   energy orange #ff6b35, data green #00ff88.
+   ============================================================ */
+
+:root {
+  --holo-cyan: #00f0ff;
+  --holo-orange: #ff6b35;
+  --holo-green: #00ff88;
+  --holo-amber: #ffd166;
+  --holo-red: #ff2d55;
+  --holo-blue: #4d7cfe;
+  --holo-panel: rgba(10, 20, 40, 0.7);
+  --holo-border: rgba(0, 240, 255, 0.15);
+  --holo-grid: rgba(0, 240, 255, 0.08);
+  --font-display: "Orbitron", "Rajdhani", sans-serif;
+  --font-tech: "Rajdhani", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at center, #0a0f1c 0%, #000000 100%) fixed;
+  font-family: var(--font-mono);
+  color: #cbd5e1;
+  overflow-x: hidden;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+.font-tech {
+  font-family: var(--font-tech);
+}
+
+/* ---------- Text glow helpers ---------- */
+.holo-glow-cyan {
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.55), 0 0 32px rgba(0, 240, 255, 0.25);
+}
+.holo-glow-orange {
+  text-shadow: 0 0 10px rgba(255, 107, 53, 0.6), 0 0 32px rgba(255, 107, 53, 0.3);
+}
+.holo-glow-green {
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.55), 0 0 32px rgba(0, 255, 136, 0.25);
+}
+.holo-glow-red {
+  text-shadow: 0 0 12px rgba(255, 45, 85, 0.7), 0 0 36px rgba(255, 45, 85, 0.35);
+}
+
+/* ---------- Glass panels ---------- */
+.holo-glass {
+  background: var(--holo-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--holo-border);
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.08), inset 0 0 40px rgba(0, 240, 255, 0.03);
+}
+
+.holo-glass-threat {
+  border-color: rgba(255, 107, 53, 0.35);
+  box-shadow: 0 0 24px rgba(255, 107, 53, 0.12), inset 0 0 40px rgba(255, 107, 53, 0.04);
+}
+
+/* corner bracket accents on panels */
+.holo-corners {
+  position: relative;
+}
+.holo-corners::before,
+.holo-corners::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: var(--holo-cyan);
+  border-style: solid;
+  opacity: 0.8;
+  filter: drop-shadow(0 0 4px rgba(0, 240, 255, 0.6));
+  pointer-events: none;
+}
+.holo-corners::before {
+  top: -1px;
+  left: -1px;
+  border-width: 2px 0 0 2px;
+}
+.holo-corners::after {
+  bottom: -1px;
+  right: -1px;
+  border-width: 0 2px 2px 0;
+}
+
+/* ---------- Scanline overlay ---------- */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.14) 0px,
+    rgba(0, 0, 0, 0.14) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  mix-blend-mode: multiply;
+}
+
+/* ---------- Vignette ---------- */
+.holo-vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  pointer-events: none;
+  box-shadow: inset 0 0 150px rgba(0, 0, 0, 0.9);
+}
+
+/* ---------- Holographic perspective grid floor ---------- */
+.holo-floor-wrap {
+  position: fixed;
+  left: -30%;
+  right: -30%;
+  bottom: -32vh;
+  height: 78vh;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  perspective: 620px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 60% at 50% 100%, black 30%, transparent 75%);
+  mask-image: radial-gradient(ellipse 75% 60% at 50% 100%, black 30%, transparent 75%);
+}
+.holo-floor {
+  position: absolute;
+  inset: 0;
+  transform: rotateX(64deg);
+  transform-origin: 50% 100%;
+  background-image:
+    linear-gradient(rgba(0, 240, 255, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.09) 1px, transparent 1px);
+  background-size: 52px 52px;
+  animation: holoGridScroll 2.6s linear infinite;
+}
+@keyframes holoGridScroll {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 52px;
+  }
+}
+
+/* ---------- Hexagon logo ---------- */
+.hex-logo {
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+.hex-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1px dashed rgba(0, 240, 255, 0.5);
+  animation: spin 6s linear infinite;
+}
+.hex-ring.reverse {
+  inset: -12px;
+  border-style: solid;
+  border-color: rgba(0, 240, 255, 0.15) transparent;
+  animation-duration: 3s;
+  animation-direction: reverse;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- Glitch ---------- */
+@keyframes glitchShiftA {
+  0% {
+    clip-path: inset(0 0 85% 0);
+    transform: translate(-2px, -1px);
+  }
+  25% {
+    clip-path: inset(40% 0 43% 0);
+    transform: translate(2px, 1px);
+  }
+  50% {
+    clip-path: inset(80% 0 5% 0);
+    transform: translate(-1px, 2px);
+  }
+  75% {
+    clip-path: inset(20% 0 60% 0);
+    transform: translate(1px, -2px);
+  }
+  100% {
+    clip-path: inset(60% 0 20% 0);
+    transform: translate(0, 0);
+  }
+}
+@keyframes glitchShiftB {
+  0% {
+    clip-path: inset(80% 0 5% 0);
+    transform: translate(2px, 1px);
+  }
+  25% {
+    clip-path: inset(10% 0 70% 0);
+    transform: translate(-2px, -1px);
+  }
+  50% {
+    clip-path: inset(50% 0 30% 0);
+    transform: translate(1px, -2px);
+  }
+  75% {
+    clip-path: inset(70% 0 15% 0);
+    transform: translate(-1px, 2px);
+  }
+  100% {
+    clip-path: inset(0 0 90% 0);
+    transform: translate(0, 0);
+  }
+}
+.glitch {
+  position: relative;
+  display: inline-block;
+}
+.glitch::before,
+.glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.glitch.glitch-flash::before {
+  opacity: 0.8;
+  color: #ff6b35;
+  animation: glitchShiftA 0.3s steps(2) both;
+}
+.glitch.glitch-flash::after {
+  opacity: 0.8;
+  color: #00f0ff;
+  animation: glitchShiftB 0.3s steps(2) both;
+}
+
+/* ---------- Blinking cursor ---------- */
+.cursor-blink {
+  display: inline-block;
+  width: 8px;
+  height: 1em;
+  background: var(--holo-cyan);
+  box-shadow: 0 0 8px var(--holo-cyan);
+  animation: cursorBlink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+@keyframes cursorBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ---------- Holo flicker ---------- */
+.holo-flicker {
+  animation: holoFlicker 0.16s steps(3) both;
+}
+@keyframes holoFlicker {
+  0% {
+    opacity: 1;
+  }
+  30% {
+    opacity: 0.72;
+  }
+  60% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* ---------- Threat pulse ring ---------- */
+.threat-pulse {
+  position: relative;
+}
+.threat-pulse::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0 rgba(255, 107, 53, 0.6);
+  animation: threatPing 1.8s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes threatPing {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 53, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(255, 107, 53, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 53, 0);
+  }
+}
+
+/* ---------- Radial screen pulse (keyword flash) ---------- */
+.screen-pulse {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+  background: radial-gradient(circle at center, rgba(255, 107, 53, 0.16) 0%, transparent 55%);
+  animation: screenPulse 0.45s ease-out both;
+}
+@keyframes screenPulse {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ---------- Terminal ---------- */
+.terminal {
+  background: rgba(2, 6, 16, 0.82);
+  border: 1px solid rgba(0, 240, 255, 0.12);
+  box-shadow: inset 0 0 24px rgba(0, 240, 255, 0.04);
+}
+.terminal-header-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--holo-red);
+  box-shadow: 0 0 6px var(--holo-red);
+}
+
+/* ---------- Scan beam ---------- */
+@keyframes scanBeamY {
+  0% {
+    transform: translateY(120px);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-120px);
+    opacity: 0;
+  }
+}
+.scan-beam-2d {
+  animation: scanBeamY 1.4s ease-in-out infinite;
+}
+
+/* ---------- Keyframe utilities ---------- */
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise-in {
+  animation: riseIn 0.5s ease both;
+}
+
+@keyframes fadeInGlow {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+.fade-in-glow {
+  animation: fadeInGlow 0.7s ease both;
+}
+
+/* ---------- Scrollbars ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #02040a;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 240, 255, 0.45);
+}
+
+/* range scrubber */
+input[type="range"].holo-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #00f0ff, #00ff88);
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"].holo-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #0a0f1c;
+  border: 2px solid var(--holo-cyan);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.8);
+}
+
+/* ---------- keyword flash + stamp shockwave ---------- */
+.keyword-flash {
+  display: inline-block;
+  animation: keywordFlash 0.5s ease both;
+}
+@keyframes keywordFlash {
+  0% {
+    transform: scale(1.7);
+    filter: blur(2px);
+  }
+  100% {
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+.stamp-box {
+  position: relative;
+}
+.stamp-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 107, 53, 0.9);
+  box-shadow: 0 0 12px rgba(255, 107, 53, 0.6);
+  opacity: 0;
+  pointer-events: none;
+}
+.stamp-ring.on {
+  animation: stampRing 0.9s ease-out both;
+}
+@keyframes stampRing {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(22);
+    opacity: 0;
+  }
+}
+
+.slide-in-right {
+  animation: slideInRight 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes slideInRight {
+  from {
+    transform: translateX(60px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+

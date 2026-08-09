@@ -15,6 +15,8 @@ export default {
         },
       },
       fontFamily: {
+        display: ["Orbitron", "Rajdhani", "sans-serif"],
+        tech: ["Rajdhani", "sans-serif"],
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       keyframes: {

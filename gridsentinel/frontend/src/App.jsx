@@ -1,179 +1,146 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import HolographicHeader from "./components/HolographicHeader";
+import ParticleBackground from "./components/ParticleBackground";
+import HolographicGrid from "./components/HolographicGrid";
+import ScanlineOverlay from "./components/ScanlineOverlay";
 import UploadZone from "./components/UploadZone";
+import EngineStatusPanel from "./components/EngineStatusPanel";
 import RiskMeter from "./components/RiskMeter";
 import AutopsyVisualizer from "./components/AutopsyVisualizer";
 import SandboxComparison from "./components/SandboxComparison";
 import GridImpactTwin from "./components/GridImpactTwin";
 import ProsecutorReport from "./components/ProsecutorReport";
+import TerminalText from "./components/TerminalText";
 import { getReport } from "./api";
+import { useWebGLSupport } from "./hooks/useHologramGlow";
 
-const STAGES = ["static", "sandbox", "heuristic", "grid_impact"];
-const STAGE_LABEL = {
-  static: "Software Autopsy",
-  sandbox: "Deceptive Sandbox",
-  heuristic: "ML Anomaly Scan",
-  grid_impact: "Grid Impact Twin",
-};
+const MODES = [
+  { key: "autopsy", label: "AUTOPSY", icon: "🧬", needs: (r) => r?.static && Object.keys(r.static).length > 0 },
+  { key: "deception", label: "DECEPTION", icon: "🎭", needs: (r) => r?.dynamic && Object.keys(r.dynamic).length > 0 },
+  { key: "holodeck", label: "HOLODECK", icon: "⚡", needs: (r) => r?.status === "complete" && r?.grid_impact },
+  { key: "narrator", label: "NARRATOR", icon: "👨‍⚖️", needs: (r) => r?.status === "complete" && r?.prosecutor_report },
+];
 
-function StatusBar({ status, error }) {
-  const activeIndex = STAGES.indexOf(status);
-  return (
-    <div className="w-full">
-      <div className="flex items-center gap-2 mb-2">
-        {STAGES.map((s, i) => {
-          const done = activeIndex > i || status === "complete";
-          const active = activeIndex === i;
-          return (
-            <div key={s} className="flex-1">
-              <div
-                className={`h-1.5 rounded-full transition-all ${
-                  done ? "bg-emerald-400" : active ? "bg-cyan-400 animate-pulseGlow" : "bg-slate-700"
-                }`}
-              />
-              <div className={`text-[10px] font-mono mt-1 ${done ? "text-emerald-300" : active ? "text-cyan-300" : "text-slate-600"}`}>
-                {done ? "✓ " : active ? "▶ " : ""}
-                {STAGE_LABEL[s]}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {error && (
-        <div className="text-red-400 text-xs font-mono bg-red-500/10 border border-red-500/40 rounded-lg p-2">
-          Scan failed: {error}
-        </div>
-      )}
-    </div>
+function buildStreamLines(report) {
+  const lines = [];
+  if (!report) return ["> COMMAND CENTER READY", "> AWAITING TARGET ACQUISITION"];
+  lines.push(`> TARGET: ${report.filename || "?"}`);
+  if (report.sha256) lines.push(`> SHA256: ${report.sha256.slice(0, 18)}…`);
+  const status = report.status;
+  if (status === "processing" || status === "static") lines.push("> STATIC ENGINE: RUNNING…");
+  if (status === "sandbox") lines.push("> SANDBOX ENGINE: RUNNING…");
+  if (report.dynamic?.activated) lines.push("> SANDBOX: PAYLOAD ACTIVATED — BEHAVIOR CAPTURED");
+  if (report.dynamic && !report.dynamic.activated) lines.push("> SANDBOX: SAMPLE DORMANT");
+  if (status === "heuristic") lines.push("> ML ENGINE: SCORING…");
+  if (report.heuristic?.risk_percentile != null) lines.push(`> ML RISK PERCENTILE: ${report.heuristic.risk_percentile}`);
+  (report.power_rules?.triggered_rules || []).forEach((r) =>
+    lines.push(`> RULE ${r.id} [${r.severity}]: ${r.name}`)
   );
+  if (report.grid_impact?.severity) lines.push(`> GRID IMPACT: ${report.grid_impact.severity}`);
+  if (report.status === "complete") {
+    lines.push(`> VERDICT: ${report.verdict} (${report.risk_score}/100)`);
+    lines.push("> ANALYSIS COMPLETE — REPORT GENERATED");
+  }
+  if (report.status === "error") lines.push(`> ERROR: ${report.error}`);
+  return lines;
 }
 
-function InfoCard({ label, value, tone = "slate" }) {
-  const color =
-    tone === "red" ? "text-red-300" : tone === "amber" ? "text-amber-300" : tone === "green" ? "text-emerald-300" : "text-cyan-300";
-  return (
-    <div className="rounded-lg border border-slate-700/60 bg-slate-900/50 p-3">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">{label}</div>
-      <div className={`text-sm font-mono ${color} break-all mt-0.5`}>{value}</div>
-    </div>
-  );
-}
-
-function StaticSection({ report }) {
-  const static_ = report?.static || {};
-  const basic = static_.basic_info || {};
-  const rules = report?.power_rules?.triggered_rules || [];
-
-  return (
-    <section className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <InfoCard label="Format" value={`${static_.file_type || "?"}`} />
-        <InfoCard label="Size" value={basic.size_human || "?"} />
-        <InfoCard
-          label="Signed"
-          value={basic.is_signed ? "YES" : "NO"}
-          tone={basic.is_signed ? "green" : "red"}
-        />
-        <InfoCard
-          label="SHA-256"
-          value={(basic.sha256 || "").slice(0, 16) + "…"}
-        />
-        <InfoCard label="Vendor Claim" value={basic.claimed_vendor || "?"} />
-        <InfoCard label="Architecture" value={basic.architecture || "?"} />
-        <InfoCard
-          label="Sections"
-          value={(static_.sections || []).length}
-          tone={static_.summary?.num_high_entropy_sections ? "amber" : "slate"}
-        />
-        <InfoCard
-          label="YARA Hits"
-          value={(static_.yara_matches || []).length}
-          tone={(static_.yara_matches || []).length ? "red" : "slate"}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
-          <h3 className="text-cyan-300 font-semibold mb-2">🧬 Software Autopsy — PE Structure</h3>
-          <AutopsyVisualizer data={static_._graph} />
-        </div>
-        <div className="space-y-4">
-          <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-4">
-            <div className="text-xs text-slate-400 font-mono mb-2 tracking-widest">// FLAGS</div>
-            {Object.entries(static_.flags || {}).map(([k, v]) => (
-              <div key={k} className="flex items-center justify-between text-xs font-mono py-1">
-                <span className="text-slate-400">{k}</span>
-                <span className={v ? "text-red-300" : "text-slate-600"}>{v ? "⚠ present" : "—"}</span>
-              </div>
-            ))}
-          </div>
-          <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-4">
-            <div className="text-xs text-slate-400 font-mono mb-2 tracking-widest">// SECTIONS / ENTROPY</div>
-            {(static_.sections || []).slice(0, 8).map((s) => (
-              <div key={s.name} className="flex items-center justify-between text-xs font-mono py-1">
-                <span className="text-slate-300">{s.name}</span>
-                <span className={s.high_entropy ? "text-red-300" : "text-slate-500"}>{s.entropy.toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-          <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-4">
-            <div className="text-xs text-slate-400 font-mono mb-2 tracking-widest">// YARA MATCHES</div>
-            {(static_.yara_matches || []).map((m) => (
-              <div key={m.rule} className="text-xs font-mono py-1 text-red-300">• {m.rule}</div>
-            ))}
-            {!(static_.yara_matches || []).length && <div className="text-xs text-slate-600">none</div>}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {Object.entries(static_.strings || {}).filter(([, v]) => v?.length).map(([k, v]) => (
-          <div key={k} className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-3">
-            <div className="text-[11px] text-slate-400 font-mono mb-1 uppercase tracking-wider">Strings · {k} ({v.length})</div>
-            <div className="text-xs font-mono text-red-200/80 break-all space-y-0.5">
-              {(v || []).slice(0, 6).map((s, i) => (
-                <div key={i} className="truncate">» {s}</div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {rules.length > 0 && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
-          <div className="text-xs text-red-300 font-mono mb-2 tracking-widest">// POWER-SECTOR RULES FIRED</div>
-          {rules.map((r) => (
-            <div key={r.id} className="flex items-start gap-3 py-1.5">
-              <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                  r.severity === "CRITICAL"
-                    ? "bg-red-500/20 text-red-300"
-                    : r.severity === "HIGH"
-                      ? "bg-amber-500/20 text-amber-300"
-                      : "bg-slate-700 text-slate-300"
-                }`}
-              >
-                {r.id} · {r.severity}
-              </span>
-              <div className="text-xs">
-                <div className="text-slate-200 font-mono">{r.name}</div>
-                <div className="text-slate-500">{r.detail}</div>
-              </div>
+function FlatFallback({ report, mode }) {
+  const s = report?.static || {};
+  const d = report?.dynamic || {};
+  const base = "rounded-lg border border-cyan-500/20 bg-[#070d18]/90 p-3 font-mono text-[11px] text-slate-300";
+  if (mode === "autopsy")
+    return (
+      <div className="space-y-2">
+        <div className={base}>
+          <div className="text-cyan-300 mb-1">// SECTIONS</div>
+          {(s.sections || []).map((x) => (
+            <div key={x.name} className="flex justify-between">
+              <span>{x.name}</span>
+              <span className={x.high_entropy ? "text-[#ff6b35]" : "text-emerald-300"}>{x.entropy}</span>
             </div>
           ))}
         </div>
-      )}
-    </section>
+        <div className={base}>
+          <div className="text-cyan-300 mb-1">// IMPORTS</div>
+          {(s.imports || []).map((x) => (
+            <div key={x.dll} className={x.suspicious.length ? "text-[#ff6b35]" : ""}>{x.dll}</div>
+          ))}
+        </div>
+        <div className={base}>
+          <div className="text-cyan-300 mb-1">// YARA</div>
+          {(s.yara_matches || []).map((m) => (
+            <div key={m.rule} className="text-[#ff6b35]">{m.rule}</div>
+          ))}
+          <div className="text-slate-500 mt-1">// STRING URLS</div>
+          {(s.strings?.urls || []).slice(0, 4).map((u) => <div key={u} className="text-slate-400 break-all">{u}</div>)}
+        </div>
+      </div>
+    );
+  if (mode === "deception")
+    return (
+      <div className={`${base} space-y-1`}>
+        <div className="text-cyan-300 mb-1">// BEHAVIORS CAPTURED</div>
+        {(d.behaviors || []).map((b, i) => (
+          <div key={i} className="flex gap-2"><span className="text-[#ff6b35]">•</span>{b.description}</div>
+        ))}
+      </div>
+    );
+  if (mode === "holodeck") {
+    const g = report?.grid_impact || {};
+    return (
+      <div className={`${base} space-y-2`}>
+        <div className="text-[#ff6b35] font-bold">{g.severity}</div>
+        <div>LOAD LOST: {g.load_loss_mw} MW</div>
+        <div>DISTRICTS: {g.affected_districts}</div>
+        <div>PATH: {(g.attack_path || []).join(" → ")}</div>
+        <div className="text-cyan-300 mt-1">// ATTACK SEQUENCE</div>
+        {(g.attack_phases || []).map((p) => (
+          <div key={p.phase}>{p.phase} — {p.detail}</div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className={`${base} whitespace-pre-wrap max-h-[420px] overflow-auto`}>
+      {report?.prosecutor_report || "AWAITING REPORT…"}
+    </div>
   );
 }
 
+function WebglGate({ fallback, children }) {
+  const supported = useWebGLSupport();
+  if (supported === false) return fallback;
+  if (supported === null) return <div className="h-[420px]" />;
+  return children;
+}
+
 export default function App() {
-  const [view, setView] = useState("upload");
+  const [phase, setPhase] = useState("acquisition");
   const [scanId, setScanId] = useState(null);
   const [filename, setFilename] = useState(null);
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   const [polling, setPolling] = useState(false);
+  const [mode, setMode] = useState("autopsy");
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [pulse, setPulse] = useState(0);
+  const [glitchKey, setGlitchKey] = useState("");
   const timerRef = useRef(null);
+
+  /* screen-wide pulse on keyword flash */
+  useEffect(() => {
+    const handler = () => setPulse((p) => p + 1);
+    window.addEventListener("gridsentinel:pulse", handler);
+    return () => window.removeEventListener("gridsentinel:pulse", handler);
+  }, []);
+
+  /* glitch header on verdict/status change */
+  useEffect(() => {
+    if (report?.verdict) setGlitchKey(report.verdict);
+    else if (report?.status === "complete") setGlitchKey("COMPLETE");
+  }, [report?.verdict, report?.status]);
 
   const handleScanCreated = useCallback((id, name) => {
     setScanId(id);
@@ -181,13 +148,26 @@ export default function App() {
     setReport(null);
     setError(null);
     setPolling(true);
-    setView("dashboard");
+    setAutoAdvance(true);
+    setMode("autopsy");
+    setPhase("analysis");
+    setGlitchKey("ACQUIRED");
+  }, []);
+
+  const reset = useCallback(() => {
+    setPolling(false);
+    setScanId(null);
+    setFilename(null);
+    setReport(null);
+    setError(null);
+    setMode("autopsy");
+    setAutoAdvance(true);
+    setPhase("acquisition");
   }, []);
 
   useEffect(() => {
     if (!polling || !scanId) return;
     let cancelled = false;
-
     const tick = async () => {
       try {
         const r = await getReport(scanId);
@@ -204,118 +184,219 @@ export default function App() {
       }
       timerRef.current = setTimeout(tick, 1200);
     };
-    timerRef.current = setTimeout(tick, 500);
+    timerRef.current = setTimeout(tick, 400);
     return () => {
       cancelled = true;
       clearTimeout(timerRef.current);
     };
   }, [polling, scanId]);
 
+  /* auto-advance stage as data arrives */
+  useEffect(() => {
+    if (!autoAdvance || !report) return;
+    if (report.dynamic && Object.keys(report.dynamic).length && mode === "autopsy") setMode("deception");
+    else if (report.status === "complete" && report.grid_impact && mode === "deception") setMode("holodeck");
+    else if (report.status === "complete" && report.prosecutor_report && mode === "holodeck") setMode("narrator");
+  }, [report, mode, autoAdvance]);
+
+  const streamLines = buildStreamLines(report);
+  const enginesLit = report
+    ? report.status === "complete"
+      ? ["static", "sandbox", "heuristic", "grid_impact"]
+      : ["static", "sandbox", "heuristic", "grid_impact"].slice(0, ["static", "sandbox", "heuristic", "grid_impact"].indexOf(report.status) + 1)
+    : [];
+
   return (
-    <div className="min-h-screen text-slate-200">
-      <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-5 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-emerald-500 grid place-items-center text-slate-950 font-bold glow-cyan">
-              GS
-            </div>
-            <div>
-              <h1 className="text-lg font-bold tracking-wide text-slate-100">
-                GridSentinel
-                <span className="text-cyan-400">_</span>
-              </h1>
-              <p className="text-[10px] text-slate-500 font-mono tracking-widest">
-                POWER SECTOR SOFTWARE SECURITY SCANNER · SIH1388
-              </p>
-            </div>
-          </div>
-          {view === "dashboard" && (
-            <div className="flex items-center gap-3 text-[11px] font-mono">
-              <span className="text-slate-500">scan://</span>
-              <span className="text-cyan-300">{scanId?.slice(0, 8)}</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-slate-300 max-w-[160px] truncate">{filename}</span>
-            </div>
+    <div className="relative min-h-screen overflow-hidden">
+      <ParticleBackground />
+      <HolographicGrid />
+      <ScanlineOverlay />
+      {pulse > 0 && <div key={pulse} className="screen-pulse" />}
+
+      <HolographicHeader status={polling ? "scanning" : "idle"} engines={enginesLit} glitchKey={glitchKey} />
+
+      <main className="relative z-10 max-w-[1600px] mx-auto px-4 md:px-6 py-5">
+        <AnimatePresence mode="wait">
+          {phase === "acquisition" ? (
+            <motion.div
+              key="acquisition"
+              initial={{ opacity: 0, rotateX: 12, scale: 0.96, y: 24 }}
+              animate={{ opacity: 1, rotateX: 0, scale: 1, y: 0 }}
+              exit={{ opacity: 0, rotateX: -8, scale: 0.97, y: -16 }}
+              transition={{ type: "spring", stiffness: 100, damping: 20 }}
+              className="max-w-3xl mx-auto pt-8"
+              style={{ perspective: 1000 }}
+            >
+              <div className="text-center mb-8">
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="inline-block font-mono text-[11px] tracking-[0.3em] text-cyan-400 border border-cyan-500/40 rounded-full px-4 py-1 mb-5 holo-glow-cyan"
+                >
+                  DETECTION OF MALWARE / TROJAN IN POWER SECTOR SOFTWARE
+                </motion.div>
+                <motion.h2
+                  data-text="WELCOME BACK, OPERATOR"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.3 }}
+                  className="glitch font-display font-black text-3xl md:text-4xl text-[#00f0ff] holo-glow-cyan tracking-[0.2em]"
+                >
+                  WELCOME BACK, OPERATOR
+                </motion.h2>
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.5 }}
+                  className="font-tech text-slate-400 mt-3 text-sm tracking-wide max-w-xl mx-auto"
+                >
+                  Feed me a suspicious binary. I will dissect it layer by layer, trick it into
+                  confessing in the deception chamber, and show you the blackout it would cause.
+                </motion.p>
+              </div>
+              <WebglGate fallback={<div className="holo-glass rounded-2xl p-8 text-center font-mono text-sm text-slate-400">HOLOGRAM PROJECTOR OFFLINE — WEBGL UNAVAILABLE</div>}>
+                <UploadZone onScanCreated={handleScanCreated} />
+              </WebglGate>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="analysis"
+              initial={{ opacity: 0, rotateX: 10, scale: 0.98 }}
+              animate={{ opacity: 1, rotateX: 0, scale: 1 }}
+              exit={{ opacity: 0, rotateX: -6, scale: 0.98 }}
+              transition={{ type: "spring", stiffness: 100, damping: 20 }}
+              style={{ perspective: 1200 }}
+            >
+              {/* status strip */}
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                <span className="font-mono text-[11px] text-slate-500">scan://<span className="text-cyan-300">{scanId?.slice(0, 8)}</span></span>
+                <span className="font-mono text-[11px] text-slate-500">|</span>
+                <span className="font-mono text-[11px] text-slate-300 max-w-[240px] truncate">{filename}</span>
+                <span className="font-mono text-[11px] text-slate-500">|</span>
+                <span className="font-mono text-[11px] text-cyan-300 uppercase tracking-widest">{report?.status || "…"}</span>
+                {error && <span className="font-mono text-[11px] text-[#ff6b35]">⚠ {error}</span>}
+                <button onClick={reset} className="ml-auto font-mono text-[11px] text-slate-400 hover:text-cyan-300 border border-slate-700 hover:border-cyan-500/50 rounded px-3 py-1">
+                  ⟲ NEW TARGET
+                </button>
+              </div>
+
+              {/* mode tabs */}
+              <div className="flex gap-2 mb-4 overflow-x-auto">
+                {MODES.map((m) => {
+                  const on = mode === m.key;
+                  const available = m.needs(report);
+                  return (
+                    <button
+                      key={m.key}
+                      disabled={!available}
+                      onClick={() => {
+                        setMode(m.key);
+                        setAutoAdvance(false);
+                      }}
+                      className={`px-3 py-1.5 rounded-md font-display text-[11px] tracking-[0.2em] border transition-all whitespace-nowrap ${
+                        on
+                          ? "border-[#00f0ff] text-[#00f0ff] bg-[#00f0ff]/10 holo-glow-cyan"
+                          : available
+                            ? "border-slate-700 text-slate-400 hover:border-cyan-500/40"
+                            : "border-slate-800 text-slate-700 cursor-not-allowed"
+                      }`}
+                    >
+                      {m.icon} {m.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 3-column layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_300px] gap-4">
+                {/* left */}
+                <div className="space-y-4">
+                  <EngineStatusPanel status={report?.status} dynamic={report?.dynamic} power={report?.power_rules} verdict={report?.verdict} />
+                  <WebglGate fallback={<div className="holo-glass rounded-xl p-4 font-mono text-[11px] text-slate-400">GAUGE OFFLINE — NO WEBGL</div>}>
+                    <RiskMeter score={report?.risk_score} breakdown={report?.risk_breakdown} verdict={report?.verdict} />
+                  </WebglGate>
+                </div>
+
+                {/* center stage */}
+                <div className="holo-glass holo-corners rounded-xl p-3 min-h-[540px]">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={mode}
+                      initial={{ opacity: 0, scale: 0.94, rotateY: -4 }}
+                      animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+                      exit={{ opacity: 0, scale: 0.96, rotateY: 4 }}
+                      transition={{ type: "spring", stiffness: 110, damping: 18 }}
+                      className="h-full"
+                    >
+                      {mode === "autopsy" && (
+                        <WebglGate fallback={<FlatFallback report={report} mode="autopsy" />}>
+                          <AutopsyVisualizer staticData={report?.static} />
+                        </WebglGate>
+                      )}
+                      {mode === "deception" && (
+                        <WebglGate fallback={<FlatFallback report={report} mode="deception" />}>
+                          <SandboxComparison dynamic={report?.dynamic} />
+                        </WebglGate>
+                      )}
+                      {mode === "holodeck" && (
+                        <WebglGate fallback={<FlatFallback report={report} mode="holodeck" />}>
+                          <GridImpactTwin impact={report?.grid_impact} />
+                        </WebglGate>
+                      )}
+                      {mode === "narrator" && (
+                        <WebglGate fallback={<FlatFallback report={report} mode="narrator" />}>
+                          <ProsecutorReport text={report?.prosecutor_report} verdict={report?.verdict} />
+                        </WebglGate>
+                      )}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+
+                {/* right stream */}
+                <div className="space-y-4">
+                  <div className="holo-glass holo-corners rounded-xl p-3">
+                    <h3 className="font-display text-xs tracking-[0.3em] text-cyan-300 holo-glow-cyan mb-2">
+                      DATA STREAM
+                    </h3>
+                    <div className="terminal rounded-lg px-3 py-2 h-[320px] overflow-hidden">
+                      <TerminalText key={scanId + report?.status} lines={streamLines} speed={12} />
+                    </div>
+                  </div>
+
+                  <div className="holo-glass rounded-xl p-3">
+                    <h3 className="font-display text-xs tracking-[0.3em] text-cyan-300 holo-glow-cyan mb-2">
+                      TARGET PROFILE
+                    </h3>
+                    <div className="space-y-1.5 font-mono text-[11px]">
+                      <Row k="FORMAT" v={report?.static?.file_type || "—"} />
+                      <Row k="SIZE" v={report?.static?.basic_info?.size_human || "—"} />
+                      <Row k="SIGNED" v={report?.static?.basic_info?.is_signed ? "YES" : "NO"} c={report?.static?.basic_info?.is_signed ? "#00ff88" : "#ff6b35"} />
+                      <Row k="VENDOR" v={report?.static?.basic_info?.claimed_vendor || "—"} />
+                      <Row k="ARCH" v={report?.static?.basic_info?.architecture || "—"} />
+                      <Row k="PACKER" v={report?.static?.packer_name || "NONE"} c={report?.static?.packer_detected ? "#ff6b35" : "#00ff88"} />
+                      <Row k="MODBUS" v={report?.static?.has_modbus_strings ? "DETECTED" : "NONE"} c={report?.static?.has_modbus_strings ? "#ff6b35" : "#64748b"} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
           )}
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-5 py-8">
-        {view === "upload" && (
-          <>
-            <div className="text-center mb-10">
-              <div className="inline-block text-[11px] font-mono text-cyan-400 border border-cyan-500/40 rounded-full px-3 py-1 mb-4">
-                DETECTION OF MALWARE / TROJAN IN POWER SECTOR SOFTWARE
-              </div>
-              <h2 className="text-3xl md:text-4xl font-bold text-slate-100">
-                A forensic <span className="text-cyan-400">software autopsy</span> for the grid
-              </h2>
-              <p className="text-slate-400 mt-3 max-w-2xl mx-auto text-sm">
-                GridSentinel dissects every binary like a CT scan, runs it through a sandbox that
-                <span className="text-emerald-400"> lies to malware</span>, scores it with a trained
-                anomaly model, and animates the blackout it would cause — all air-gapped, all offline.
-              </p>
-            </div>
-            <UploadZone onScanCreated={handleScanCreated} />
-          </>
-        )}
-
-        {view === "dashboard" && (
-          <div className="space-y-8">
-            <StatusBar status={report?.status} error={error} />
-
-            {report?.status && (
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
-                <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-5 flex justify-center">
-                  <RiskMeter
-                    score={report.risk_score}
-                    breakdown={report.risk_breakdown}
-                    verdict={report.verdict}
-                  />
-                </div>
-                <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-3 gap-3">
-                  <InfoCard label="Scan Status" value={report.status} />
-                  <InfoCard label="SHA-256" value={(report.sha256 || "").slice(0, 16) + "…"} />
-                  <InfoCard label="Verdict" value={report.verdict} tone={report.verdict === "MALICIOUS" ? "red" : report.verdict === "SUSPICIOUS" ? "amber" : "green"} />
-                  <InfoCard label="Static Score" value={report.risk_breakdown?.static ?? "—"} />
-                  <InfoCard label="Dynamic Score" value={report.risk_breakdown?.dynamic ?? "—"} />
-                  <InfoCard label="Heuristic %ile" value={report.risk_breakdown?.heuristic ?? "—"} />
-                </div>
-              </div>
-            )}
-
-            {report?.static && Object.keys(report.static).length > 0 && <StaticSection report={report} />}
-
-            {report?.dynamic && Object.keys(report.dynamic).length > 0 && (
-              <section className="pt-2">
-                <SandboxComparison dynamic={report.dynamic} />
-              </section>
-            )}
-
-            {report?.status === "complete" && report?.grid_impact && (
-              <section className="pt-2">
-                <GridImpactTwin impact={report.grid_impact} />
-              </section>
-            )}
-
-            {report?.status === "complete" && report?.prosecutor_report && (
-              <section className="pt-2">
-                <ProsecutorReport text={report.prosecutor_report} verdict={report.verdict} />
-              </section>
-            )}
-
-            {report?.status === "processing" && (
-              <div className="text-center text-sm text-slate-500 font-mono animate-pulseGlow">
-                analyzing… engines running sequentially
-              </div>
-            )}
-          </div>
-        )}
+        </AnimatePresence>
       </main>
 
-      <footer className="border-t border-slate-800 py-4 text-center text-[10px] font-mono text-slate-600">
-        GridSentinel v2.4 · SIH1388 · fully air-gapped · no external API calls
+      <footer className="relative z-10 border-t border-cyan-500/10 py-3 text-center font-mono text-[10px] tracking-[0.3em] text-slate-600">
+        GRIDSENTINEL v2.5 · PROJECT JARVIS · AIR-GAPPED · NO EXTERNAL API CALLS
       </footer>
+    </div>
+  );
+}
+
+function Row({ k, v, c = "#e2e8f0" }) {
+  return (
+    <div className="flex justify-between gap-2">
+      <span className="text-slate-500">{k}</span>
+      <span className="text-right break-all" style={{ color: c }}>{v}</span>
     </div>
   );
 }

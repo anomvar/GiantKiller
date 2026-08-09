@@ -1,263 +1,460 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { OrbitControls, Text, Html, Line, MeshReflectorMaterial, Sparkles } from "@react-three/drei";
+import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
+import * as THREE from "three";
 
-const NODE_POS = {
-  SCADA_HMI: [90, 210],
-  Relay_1: [250, 210],
-  Transformer_T3: [410, 210],
-  Bus_3: [570, 210],
-  Load_A: [770, 80],
-  Load_B: [770, 340],
+const CYAN = "#00f0ff";
+const ORANGE = "#ff6b35";
+const RED = "#ff2d55";
+const GREEN = "#00ff88";
+
+/* ------------------------------ path math ------------------------------ */
+
+const NODE3D = {
+  SCADA_HMI: [-4.2, 0, -2.5],
+  Relay_1: [-1.3, 0, -2.5],
+  Transformer_T3: [1.5, 0, -2.5],
+  Bus_3: [4.0, 0, -2.5],
+  Load_A: [6.4, 0, 0.2],
+  Load_B: [6.4, 0, -5.2],
 };
 
-const PULSE_PATH_POINTS = [
-  [90, 210], // SCADA
-  [250, 210], // Relay
-  [410, 210], // Transformer
-  [570, 210], // Bus
-  [770, 80], // Load A
-  [570, 210], // back to bus
-  [770, 340], // Load B
+const PULSE_POINTS = [
+  NODE3D.SCADA_HMI,
+  NODE3D.Relay_1,
+  NODE3D.Transformer_T3,
+  NODE3D.Bus_3,
+  NODE3D.Load_A,
+  NODE3D.Bus_3,
+  NODE3D.Load_B,
 ];
 
-const NODE_ARRIVAL_INDEX = { SCADA_HMI: 0, Relay_1: 1, Transformer_T3: 2, Bus_3: 3, Load_A: 4, Load_B: 6 };
-
-const ICON = {
-  control: "🖥️",
-  relay: "⚡",
-  transformer: "🔌",
-  bus: "▰",
-  load: "🏙️",
-};
-
-function buildSegments() {
+function computePath() {
   const segs = [];
-  for (let i = 0; i < PULSE_PATH_POINTS.length - 1; i++) {
-    const [x1, y1] = PULSE_PATH_POINTS[i];
-    const [x2, y2] = PULSE_PATH_POINTS[i + 1];
-    segs.push({ x1, y1, x2, y2, len: Math.hypot(x2 - x1, y2 - y1) });
+  for (let i = 0; i < PULSE_POINTS.length - 1; i++) {
+    const [x1, y1, z1] = PULSE_POINTS[i];
+    const [x2, y2, z2] = PULSE_POINTS[i + 1];
+    segs.push({ a: [x1, y1, z1], b: [x2, y2, z2], len: Math.hypot(x2 - x1, y2 - y1, z2 - z1) });
   }
-  const total = segs.reduce((a, s) => a + s.len, 0);
+  const total = segs.reduce((s, x) => s + x.len, 0);
   let cum = 0;
   const cumAt = segs.map((s) => {
     cum += s.len;
     return cum;
   });
-  return { segs, total, cumAt };
+  const arrivalIdx = { SCADA_HMI: 0, Relay_1: 1, Transformer_T3: 2, Bus_3: 3, Load_A: 4, Load_B: 6 };
+  const arrivals = {};
+  for (const [id, idx] of Object.entries(arrivalIdx)) {
+    arrivals[id] = idx === 0 ? 0 : cumAt[idx - 1] / total;
+  }
+  return { segs, total, cumAt, arrivals };
 }
 
-export default function GridImpactTwin({ impact }) {
-  const [progress, setProgress] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const raf = useRef(null);
+const { segs, total, cumAt, arrivals } = computePath();
 
-  const nodes = impact?.topology?.nodes || [];
-  const edges = impact?.topology?.edges || [];
-  const attackPath = impact?.attack_path || [];
-  const compromised = impact?.compromised_nodes || [];
-  const effect = impact?.cascading_effect || "";
+function pulsePosition(progress) {
+  const dist = Math.max(0, Math.min(1, progress)) * total;
+  for (let i = 0; i < segs.length; i++) {
+    const startCum = i === 0 ? 0 : cumAt[i - 1];
+    if (dist <= cumAt[i]) {
+      const k = (dist - startCum) / segs[i].len;
+      return {
+        x: segs[i].a[0] + (segs[i].b[0] - segs[i].a[0]) * k,
+        y: segs[i].a[1] + (segs[i].b[1] - segs[i].a[1]) * k,
+        z: segs[i].a[2] + (segs[i].b[2] - segs[i].a[2]) * k,
+      };
+    }
+  }
+  const last = segs[segs.length - 1];
+  return { x: last.b[0], y: last.b[1], z: last.b[2] };
+}
+
+/* ------------------------------ node meshes ---------------------------- */
+
+function ScadaNode({ infected }) {
+  const c = infected ? RED : CYAN;
+  return (
+    <group>
+      <mesh position={[0, 0.45, 0]}>
+        <boxGeometry args={[0.9, 0.9, 0.7]} />
+        <meshStandardMaterial color="#0a2440" emissive={c} emissiveIntensity={infected ? 1.4 : 0.25} />
+      </mesh>
+      <mesh position={[0, 0.45, 0.36]}>
+        <planeGeometry args={[0.72, 0.5]} />
+        <meshBasicMaterial color={c} toneMapped={false} />
+      </mesh>
+      <Text position={[0, 1.15, 0]} fontSize={0.18} color={c} anchorX="center">SCADA HMI</Text>
+    </group>
+  );
+}
+
+function RelayNode({ infected }) {
+  const antenna = useRef();
+  const c = infected ? RED : GREEN;
+  useFrame((_, dt) => {
+    if (antenna.current) antenna.current.rotation.y += dt * (infected ? 6 : 1.4);
+  });
+  return (
+    <group>
+      <mesh position={[0, 0.7, 0]}>
+        <cylinderGeometry args={[0.28, 0.34, 1.4, 8]} />
+        <meshStandardMaterial color="#0a2440" emissive={c} emissiveIntensity={infected ? 1.3 : 0.18} />
+      </mesh>
+      <group ref={antenna} position={[0, 1.5, 0]}>
+        <mesh>
+          <boxGeometry args={[0.06, 0.6, 0.06]} />
+          <meshStandardMaterial color={c} emissive={c} emissiveIntensity={infected ? 2 : 0.5} toneMapped={false} />
+        </mesh>
+        <mesh position={[0, 0.35, 0]}>
+          <sphereGeometry args={[0.08, 8, 8]} />
+          <meshBasicMaterial color={c} toneMapped={false} />
+        </mesh>
+      </group>
+      <Text position={[0, 2.05, 0]} fontSize={0.16} color={c} anchorX="center">220kV RELAY</Text>
+      {infected && <Sparkles count={16} scale={1.6} size={3.5} speed={1.6} color={ORANGE} />}
+    </group>
+  );
+}
+
+function TransformerNode({ infected }) {
+  const c = infected ? RED : CYAN;
+  return (
+    <group>
+      <mesh position={[0, 0.55, 0]}>
+        <cylinderGeometry args={[0.5, 0.62, 1.1, 12]} />
+        <meshStandardMaterial color="#0a2440" emissive={c} emissiveIntensity={infected ? 1.3 : 0.2} />
+      </mesh>
+      {[-0.3, 0, 0.3].map((y) => (
+        <mesh key={y} position={[0, y, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <torusGeometry args={[0.62, 0.03, 8, 24]} />
+          <meshStandardMaterial color={c} emissive={c} emissiveIntensity={infected ? 2 : 0.45} toneMapped={false} />
+        </mesh>
+      ))}
+      <Text position={[0, 1.15, 0]} fontSize={0.16} color={c} anchorX="center">400/220kV TX</Text>
+    </group>
+  );
+}
+
+function BusNode({ infected }) {
+  const c = infected ? RED : CYAN;
+  return (
+    <group>
+      <mesh position={[0, 0.22, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <boxGeometry args={[0.3, 2.6, 0.3]} />
+        <meshStandardMaterial color="#0a2440" emissive={c} emissiveIntensity={infected ? 1.4 : 0.35} />
+      </mesh>
+      <Text position={[0, 0.9, 0]} fontSize={0.16} color={c} anchorX="center">BUS 3</Text>
+    </group>
+  );
+}
+
+function CityNode({ id, infected, lost }) {
+  const c = lost ? RED : GREEN;
+  const buildings = [
+    [0, 0, 0, 0.5, 0.8],
+    [0.8, 0, 0.2, 0.4, 0.55],
+    [-0.75, 0, -0.2, 0.45, 0.7],
+    [0.3, 0, 0.7, 0.35, 0.5],
+    [-0.3, 0, -0.8, 0.4, 0.6],
+  ];
+  return (
+    <group>
+      {buildings.map(([x, y, z, w, h], i) => (
+        <mesh key={i} position={[x, h / 2, z]}>
+          <boxGeometry args={[w, h, w]} />
+          <meshStandardMaterial
+            color="#0a2440"
+            emissive={lost ? "#241014" : c}
+            emissiveIntensity={lost ? 0.06 : 0.8}
+          />
+        </mesh>
+      ))}
+      <Html position={[0, 1.7, 0]} center distanceFactor={10} style={{ pointerEvents: "none" }}>
+        <div
+          className={`font-mono text-[10px] tracking-widest px-2 py-0.5 rounded border text-center`}
+          style={{
+            color: lost ? RED : c,
+            borderColor: lost ? RED : c,
+            background: "rgba(4,7,13,0.75)",
+            boxShadow: `0 0 12px ${lost ? RED : c}55`,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {id === "Load_A" ? "CITY A · 150MW" : "CITY B · 190MW"} {lost && "· ⚡ POWER LOST"}
+        </div>
+      </Html>
+    </group>
+  );
+}
+
+/* ------------------------------ pulse + warnings ----------------------- */
+
+function InfectionPulse({ progressRef, active }) {
+  const ref = useRef();
+  useFrame(() => {
+    const p = pulsePosition(progressRef.current);
+    if (ref.current) ref.current.position.set(p.x, 0.55, p.z);
+  });
+  if (!active) return null;
+  return (
+    <mesh ref={ref}>
+      <sphereGeometry args={[0.14, 16, 16]} />
+      <meshBasicMaterial color={RED} toneMapped={false} />
+    </mesh>
+  );
+}
+
+function WarningHologram({ active, loadLoss, districts }) {
+  const ring = useRef();
+  useFrame((state) => {
+    if (ring.current) {
+      const k = (state.clock.elapsedTime * 0.6) % 1;
+      ring.current.scale.setScalar(0.5 + k * 5);
+      ring.current.material.opacity = 1 - k;
+    }
+  });
+  if (!active) return null;
+  return (
+    <group>
+      <mesh ref={ring}>
+        <ringGeometry args={[0.8, 1.0, 48]} />
+        <meshBasicMaterial color={RED} transparent opacity={1} side={2} toneMapped={false} />
+      </mesh>
+      <Text position={[0, 3.2, -1.5]} fontSize={0.55} color={RED} anchorX="center" strokeWidth={0.02} strokeColor="#000000">
+        ⚠ CRITICAL — {loadLoss}MW LOAD LOST
+      </Text>
+      <Text position={[0, 2.5, -1.5]} fontSize={0.28} color={ORANGE} anchorX="center">
+        {districts} DISTRICTS AFFECTED · EST. RESTORATION 4H
+      </Text>
+    </group>
+  );
+}
+
+function ShakeCam({ active }) {
+  const { camera } = useThree();
+  const base = useMemo(() => ({ x: 3.4, y: 5.4, z: 10.5 }), []);
+  useFrame((state) => {
+    if (!active) return;
+    const t = state.clock.elapsedTime;
+    camera.position.x = base.x + Math.sin(t * 55) * 0.14;
+    camera.position.y = base.y + Math.sin(t * 47 + 1) * 0.1;
+    camera.position.z = base.z + Math.sin(t * 61 + 2) * 0.12;
+  });
+  return null;
+}
+
+function PanRig({ playing, progressRef }) {
+  const { camera } = useThree();
+  useFrame(() => {
+    if (!playing) return;
+    const p = pulsePosition(progressRef.current);
+    const tx = THREE.MathUtils.lerp(camera.position.x, p.x * 0.35, 0.02);
+    camera.position.x = tx;
+  });
+  return null;
+}
+
+/* ------------------------------ scene ---------------------------------- */
+
+function GridScene({ progressRef, playingRef, onProgressChange, impact, speedRef }) {
+  const [infectedSet, setInfectedSet] = useState(new Set());
+  const [warning, setWarning] = useState(false);
+  const sparkFired = useRef(false);
+  const infectedRef = useRef(new Set());
+  const warnRef = useRef(false);
+
   const loadLoss = impact?.load_loss_mw || 0;
   const districts = impact?.affected_districts || 0;
-  const severity = impact?.severity || "";
-  const restoration = impact?.restoration_hours || 0;
-  const phases = impact?.attack_phases || [];
+  const pathNodes = impact?.attack_path || ["SCADA_HMI", "Relay_1", "Transformer_T3", "Bus_3"];
 
-  const { segs, total, cumAt } = useMemo(buildSegments, []);
-
-  const arrivals = useMemo(() => {
-    const a = {};
-    for (const [id, idx] of Object.entries(NODE_ARRIVAL_INDEX)) {
-      a[id] = idx === 0 ? 0 : cumAt[idx - 1] / total;
+  useFrame((_, delta) => {
+    if (playingRef.current) {
+      const speed = speedRef?.current || 1;
+      progressRef.current = (progressRef.current + delta * 0.12 * speed) % 1;
+      onProgressChange(progressRef.current);
     }
-    return a;
-  }, [total, cumAt]);
-
-  useEffect(() => {
-    if (!playing) return;
-    const start = performance.now();
-    const DURATION = 9000;
-    const tick = (now) => {
-      const t = ((now - start) % DURATION) / DURATION;
-      setProgress(t);
-      raf.current = requestAnimationFrame(tick);
-    };
-    raf.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf.current);
-  }, [playing]);
-
-  const pulsePos = useMemo(() => {
-    const dist = progress * total;
-    for (let i = 0; i < segs.length; i++) {
-      const s = segs[i];
-      const startCum = i === 0 ? 0 : cumAt[i - 1];
-      if (dist <= cumAt[i]) {
-        const local = (dist - startCum) / s.len;
-        return {
-          x: s.x1 + (s.x2 - s.x1) * local,
-          y: s.y1 + (s.y2 - s.y1) * local,
-          seg: i,
-        };
-      }
+    const p = progressRef.current;
+    const infected = new Set();
+    for (const id of pathNodes) if (p >= (arrivals[id] ?? 1)) infected.add(id);
+    for (const id of ["Load_A", "Load_B"]) if (p >= (arrivals[id] ?? 1)) infected.add(id);
+    if (infected.has("Relay_1") && !sparkFired.current) {
+      sparkFired.current = true;
+      setTimeout(() => (sparkFired.current = false), 2500);
     }
-    const last = segs[segs.length - 1];
-    return { x: last.x2, y: last.y2, seg: segs.length - 1 };
-  }, [progress, total, segs, cumAt]);
+    const changed =
+      infected.size !== infectedRef.current.size ||
+      [...infected].some((id) => !infectedRef.current.has(id));
+    if (changed) {
+      infectedRef.current = infected;
+      setInfectedSet(infected);
+    }
+    const warn = p >= 0.985;
+    if (warn !== warnRef.current) {
+      warnRef.current = warn;
+      setWarning(warn);
+    }
+  });
 
-  const infectedSet = useMemo(() => {
-    const set = new Set();
-    for (const id of attackPath) if (progress >= (arrivals[id] ?? 0)) set.add(id);
-    for (const id of ["Load_A", "Load_B"]) if (progress >= (arrivals[id] ?? 1)) set.add(id);
-    return set;
-  }, [progress, attackPath, arrivals]);
+  return (
+    <group>
+      {/* reflective floor */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, -1]}>
+        <planeGeometry args={[22, 22]} />
+        <MeshReflectorMaterial
+          blur={[240, 90]}
+          resolution={512}
+          mixBlur={1}
+          mixStrength={30}
+          roughness={0.9}
+          depthScale={1.1}
+          minDepthThreshold={0.4}
+          maxDepthThreshold={1.3}
+          color="#04070d"
+          metalness={0.6}
+          mirror={0.7}
+        />
+      </mesh>
+
+      {/* grid wires */}
+      <Line points={[NODE3D.SCADA_HMI, NODE3D.Relay_1]} color={infectedSet.has("Relay_1") ? RED : CYAN} lineWidth={1.2} transparent opacity={0.5} />
+      <Line points={[NODE3D.Relay_1, NODE3D.Transformer_T3]} color={infectedSet.has("Transformer_T3") ? RED : CYAN} lineWidth={1.2} transparent opacity={0.5} />
+      <Line points={[NODE3D.Transformer_T3, NODE3D.Bus_3]} color={infectedSet.has("Bus_3") ? RED : CYAN} lineWidth={1.2} transparent opacity={0.5} />
+      <Line points={[NODE3D.Bus_3, NODE3D.Load_A]} color={infectedSet.has("Load_A") ? RED : GREEN} lineWidth={1.2} transparent opacity={0.5} />
+      <Line points={[NODE3D.Bus_3, NODE3D.Load_B]} color={infectedSet.has("Load_B") ? RED : GREEN} lineWidth={1.2} transparent opacity={0.5} />
+
+      <group position={NODE3D.SCADA_HMI}>
+        <ScadaNode infected={infectedSet.has("SCADA_HMI")} />
+      </group>
+      <group position={NODE3D.Relay_1}>
+        <RelayNode infected={infectedSet.has("Relay_1")} />
+      </group>
+      <group position={NODE3D.Transformer_T3}>
+        <TransformerNode infected={infectedSet.has("Transformer_T3")} />
+      </group>
+      <group position={NODE3D.Bus_3}>
+        <BusNode infected={infectedSet.has("Bus_3")} />
+      </group>
+      <group position={NODE3D.Load_A}>
+        <CityNode id="Load_A" infected={infectedSet.has("Load_A")} lost={infectedSet.has("Load_A")} />
+      </group>
+      <group position={NODE3D.Load_B}>
+        <CityNode id="Load_B" infected={infectedSet.has("Load_B")} lost={infectedSet.has("Load_B")} />
+      </group>
+
+      <InfectionPulse progressRef={progressRef} active={pathNodes.length > 1} />
+      <PanRig playing={playingRef.current} progressRef={progressRef} />
+      <ShakeCam active={warning} />
+      <WarningHologram active={warning} loadLoss={loadLoss} districts={districts} />
+    </group>
+  );
+}
+
+/* ------------------------------ wrapper -------------------------------- */
+
+export default function GridImpactTwin({ impact }) {
+  const [progress, setProgressState] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const progressRef = useRef(0);
+  const playingRef = useRef(false);
+  const speedRef = useRef(1);
+
+  const setPlayingBoth = (v) => {
+    playingRef.current = v;
+    setPlaying(v);
+  };
+  const onProgressChange = (v) => setProgressState(v);
 
   const loadALost = progress >= (arrivals.Load_A ?? 1);
   const loadBLost = progress >= (arrivals.Load_B ?? 1);
-  const lostMW = loadALost && loadBLost ? loadLoss : loadALost ? Math.round(loadLoss * 0.44) : 0;
+  const loss = impact?.load_loss_mw || 0;
+  const lostMW = loadALost && loadBLost ? loss : loadALost ? Math.round(loss * 0.44) : 0;
+  const districts = impact?.affected_districts || 0;
   const lostDistricts = loadALost && loadBLost ? districts : loadALost ? 1 : 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h3 className="text-cyan-300 font-semibold flex items-center gap-2">⚡ Grid Impact Twin — 220kV Substation</h3>
+        <h3 className="font-display text-sm tracking-[0.3em] text-cyan-300 holo-glow-cyan">
+          GRID IMPACT — SUBSTATION HOLODECK
+        </h3>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setPlaying((p) => !p)}
-            className="px-3 py-1.5 rounded-lg text-xs font-mono border border-cyan-500/50 text-cyan-300 hover:bg-cyan-500/10"
+            onClick={() => setPlayingBoth(!playing)}
+            className="px-3 py-1 rounded-md font-mono text-xs border border-cyan-500/50 text-cyan-300 hover:bg-cyan-500/10"
           >
-            {playing ? "⏸ Pause" : "▶ Replay Attack"}
+            {playing ? "⏸ HOLD" : "▶ REPLAY ATTACK"}
           </button>
+          <select
+            value={speed}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              setSpeed(v);
+              speedRef.current = v;
+            }}
+            className="bg-slate-900 border border-slate-700 text-[11px] font-mono text-slate-300 rounded px-1"
+          >
+            <option value="0.5">0.5x</option>
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+          </select>
           <input
             type="range"
             min="0"
             max="1000"
             value={Math.round(progress * 1000)}
             onChange={(e) => {
-              setPlaying(false);
-              setProgress(e.target.value / 1000);
+              setPlayingBoth(false);
+              progressRef.current = e.target.value / 1000;
+              onProgressChange(progressRef.current);
             }}
-            className="w-40 accent-cyan-400"
+            className="holo-range w-40"
           />
-          <span className="text-[11px] font-mono text-slate-400 w-10">{Math.round(progress * 100)}%</span>
+          <span className="font-mono text-[11px] text-cyan-300 w-10">{Math.round(progress * 100)}%</span>
         </div>
       </div>
 
-      <div
-        className={`rounded-xl border p-3 text-center text-sm font-mono tracking-wide ${
-          severity.startsWith("CRITICAL")
-            ? "border-red-500/60 bg-red-500/10 text-red-300"
-            : severity.startsWith("HIGH")
-              ? "border-amber-500/60 bg-amber-500/10 text-amber-300"
-              : "border-slate-600 bg-slate-800/40 text-slate-300"
-        }`}
-      >
-        {severity || "NO IMPACT"}
-      </div>
-
-      <div className="rounded-xl border border-slate-700/60 bg-[#0d1526] overflow-hidden">
-        <svg viewBox="0 0 860 430" className="w-full h-auto">
-          <defs>
-            <pattern id="twin-grid" width="20" height="20" patternUnits="userSpaceOnUse">
-              <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#1b2440" strokeWidth="0.5" />
-            </pattern>
-          </defs>
-          <rect width="860" height="430" fill="url(#twin-grid)" />
-
-          {edges.map((e, i) => {
-            const [x1, y1] = NODE_POS[e.from];
-            const [x2, y2] = NODE_POS[e.to];
-            const hot = infectedSet.has(e.from) && infectedSet.has(e.to);
-            return (
-              <line
-                key={i}
-                x1={x1}
-                y1={y1}
-                x2={x2}
-                y2={y2}
-                stroke={hot ? "#f87171" : "#334368"}
-                strokeWidth={hot ? 2.5 : 1.5}
-                strokeOpacity={hot ? 0.9 : 0.6}
-                style={hot ? { filter: "drop-shadow(0 0 4px #f87171)" } : undefined}
-              />
-            );
-          })}
-
-          {attackPath.length > 1 && (
-            <>
-              <path
-                d={PULSE_PATH_POINTS.map((p, i) => `${i === 0 ? "M" : "L"} ${p[0]} ${p[1]}`).join(" ")}
-                fill="none"
-                stroke="transparent"
-                id="pulse-path"
-              />
-              <circle
-                cx={pulsePos.x}
-                cy={pulsePos.y}
-                r={9}
-                fill="#f87171"
-                style={{ filter: "drop-shadow(0 0 10px #f87171)", opacity: playing || progress > 0 ? 1 : 0 }}
-              />
-            </>
-          )}
-
-          {nodes.map((n) => {
-            const [x, y] = NODE_POS[n.id];
-            const infected = infectedSet.has(n.id);
-            const isLoad = n.type === "load";
-            return (
-              <g key={n.id} transform={`translate(${x},${y})`}>
-                <circle
-                  r={isLoad ? 22 : 18}
-                  fill={infected ? "#7f1d1d" : "#0d1526"}
-                  stroke={infected ? "#f87171" : "#334368"}
-                  strokeWidth={2}
-                  style={infected ? { filter: "drop-shadow(0 0 10px #f87171)" } : undefined}
-                />
-                <text y={5} textAnchor="middle" fontSize={isLoad ? 16 : 13}>
-                  {ICON[n.type] || "•"}
-                </text>
-                <text y={40} textAnchor="middle" fontSize="11" fill={infected ? "#fca5a5" : "#94a3b8"} fontFamily="JetBrains Mono, monospace">
-                  {n.label}
-                </text>
-                {infected && (
-                  <text y={-30} textAnchor="middle" fontSize="10" fill="#f87171" fontWeight="bold" fontFamily="JetBrains Mono, monospace">
-                    {isLoad ? "⚡ POWER LOST" : "COMPROMISED"}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </svg>
+      <div className="relative h-[430px] rounded-xl overflow-hidden">
+        <Canvas dpr={[1, 1.5]} camera={{ position: [3.4, 5.4, 10.5], fov: 45 }}>
+          <color attach="background" args={["#04060c"]} />
+          <fog attach="fog" args={["#04060c", 14, 34]} />
+          <ambientLight intensity={0.25} />
+          <pointLight position={[0, 8, 6]} intensity={40} color={CYAN} />
+          <pointLight position={[-6, 2, -4]} intensity={16} color={GREEN} />
+          <pointLight position={[6, -1, 6]} intensity={12} color={ORANGE} />
+          <GridScene
+            progressRef={progressRef}
+            playingRef={playingRef}
+            onProgressChange={onProgressChange}
+            impact={impact}
+            speedRef={speedRef}
+          />
+          <OrbitControls enableDamping dampingFactor={0.08} minDistance={4} maxDistance={24} target={[0, 1.5, -1]} />
+          <EffectComposer>
+            <Bloom intensity={1.2} luminanceThreshold={0.2} mipmapBlur />
+            <Vignette eskil={false} offset={0.1} darkness={0.85} />
+          </EffectComposer>
+        </Canvas>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          ["Load Lost", `${lostMW} MW`, "text-red-300"],
-          ["Districts", lostDistricts, "text-amber-300"],
-          ["Restoration", `${restoration} h`, "text-cyan-300"],
-          ["Path Depth", attackPath.length, "text-emerald-300"],
+          ["LOAD LOST", `${lostMW} MW`, "text-[#ff6b35]"],
+          ["DISTRICTS", lostDistricts, "text-[#ffd166]"],
+          ["RESTORATION", `${impact?.restoration_hours || 0} h`, "text-cyan-300"],
+          ["PATH DEPTH", impact?.attack_path?.length || 0, "text-[#00ff88]"],
         ].map(([label, val, color]) => (
-          <div key={label} className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-3 text-center">
-            <div className={`text-2xl font-mono font-bold ${color}`}>{val}</div>
-            <div className="text-[11px] text-slate-400 font-mono uppercase tracking-wider">{label}</div>
+          <div key={label} className="holo-glass rounded-lg p-2.5 text-center">
+            <div className={`font-display text-xl font-bold ${color} holo-glow-cyan`}>{val}</div>
+            <div className="font-mono text-[9px] tracking-widest text-slate-500">{label}</div>
           </div>
         ))}
       </div>
 
-      {effect && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm text-slate-200 font-mono">
-          <span className="text-red-300">▸ Cascade:</span> {effect}
-        </div>
-      )}
-
-      {phases.length > 0 && (
-        <div className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-3">
-          <div className="text-xs text-slate-400 font-mono mb-2 tracking-widest">// ATTACK SEQUENCE</div>
-          <ol className="space-y-1.5">
-            {phases.map((p) => (
-              <li key={p.phase} className="text-xs font-mono text-slate-300">
-                <span className="text-cyan-400">{p.phase}</span> — {p.detail}
-              </li>
-            ))}
-          </ol>
+      {impact?.cascading_effect && (
+        <div className="holo-glass holo-glass-threat rounded-lg px-3 py-2 font-mono text-xs text-[#ffb59b]">
+          ▸ CASCADE: {impact.cascading_effect}
         </div>
       )}
     </div>
