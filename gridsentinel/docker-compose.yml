@@ -1,0 +1,40 @@
+services:
+  backend:
+    build: ./backend
+    container_name: gridsentinel-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - GRIDSENTINEL_DOCKER_ENABLED=true
+      - GRIDSENTINEL_SANDBOX_IMAGE=gridsentinel-sandbox:latest
+      - GRIDSENTINEL_SANDBOX_TIMEOUT=30
+    volumes:
+      - uploads_data:/app/uploads
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - sandbox
+
+  frontend:
+    build: ./frontend
+    container_name: gridsentinel-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+  # Keeps the sandbox image built and resident so the backend can spin up
+  # strace-armed detection containers on demand via the Docker SDK.
+  sandbox:
+    build: ./backend/sandbox
+    image: gridsentinel-sandbox:latest
+    container_name: gridsentinel-sandbox
+    privileged: true
+    cap_add:
+      - SYS_PTRACE
+      - NET_ADMIN
+      - NET_RAW
+    command: ["--daemon"]
+    restart: unless-stopped
+
+volumes:
+  uploads_data:

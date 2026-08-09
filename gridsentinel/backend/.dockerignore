@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+uploads/
+scan_results.db
+.venv/
+venv/
+anomaly_model.pkl

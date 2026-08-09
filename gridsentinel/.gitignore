@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.pkl.bak
+
+# Node
+node_modules/
+frontend/dist/
+npm-debug.log*
+
+# Backend runtime
+backend/scan_results.db
+backend/uploads/
+*.log
+
+# Demo payload build output
+demo_payload/build/
+
+# OS
+.DS_Store
