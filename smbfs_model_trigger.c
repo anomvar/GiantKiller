@@ -31,6 +31,17 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+/* Prefer the real macOS SDK headers (they are what mount_smbfs/smbutil use),
+ * so the ioctl cmd sizes match the kernel exactly. Compile with:
+ *   cc -O1 -o smbfs_model_trigger smbfs_model_trigger.c \
+ *      -DUSE_SYSTEM_SMB_HEADERS -isysroot "$(xcrun --show-sdk-path)"
+ * Fall back to the replicated structs below otherwise. */
+#if defined(USE_SYSTEM_SMB_HEADERS)
+#include <netsmb/smb_dev.h>
+#include <netsmb/smb_dev_2.h>
+#define SMB_IOC_STRUCT_VERSION_LOCAL SMB_IOC_STRUCT_VERSION
+#else
+
 #define SMB_IOC_STRUCT_VERSION 170
 #define SMB_MAXUSERNAMELEN 128
 #define SMB_MAXPASSWORDLEN 128
@@ -174,6 +185,8 @@ _Static_assert(sizeof(struct smbioc_vc_properties) == 576, "vc props size");
 #define SMBIOC_TCON         _IOWR('n', 111, struct smbioc_share)
 #define SMBIOC_VC_PROPERTIES _IOWR('n', 116, struct smbioc_vc_properties)
 #define SMB2IOC_CREATE      _IOWR('n', 120, struct smb2ioc_create)
+
+#endif /* USE_SYSTEM_SMB_HEADERS */
 
 static int open_nsmb(void) {
     int fd = open("/dev/nsmb", O_RDWR);
