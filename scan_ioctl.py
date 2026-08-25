@@ -19,6 +19,7 @@ TARGETS = [
     "/usr/bin/smbutil",
     "/usr/sbin/mount_smbfs",
     "/usr/lib/libsmbclient.dylib",
+    "/System/Library/CoreServices/NetAuthAgent.app/Contents/MacOS/NetAuthSysAgent",
     "/System/Library/CoreServices/NetAuthSysAgent.app/Contents/MacOS/NetAuthSysAgent",
     "/System/Library/PrivateFrameworks/NetFS.framework/Versions/A/NetFS",
     "/System/Library/Filesystems/smbfs.fs/Contents/MacOS/mount_smbfs",
