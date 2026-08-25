@@ -95,6 +95,19 @@ try:
     print("macOS version:", ver)
 except Exception:
     pass
+
+# Also list + scan the dylibs NetAuthSysAgent actually links (that is where
+# the SMBIOC_* constants live).
+agent = "/System/Library/CoreServices/NetAuthAgent.app/Contents/MacOS/NetAuthSysAgent"
+for binpath in (agent, shutil.which("smbutil")):
+    if binpath and os.path.exists(binpath):
+        print("\n== otool -L %s ==" % binpath)
+        os.system("otool -L %s 2>/dev/null" % binpath)
+        for line in os.popen("otool -L %s 2>/dev/null" % binpath):
+            line = line.strip()
+            if line.startswith("/"):
+                scan(line.split(" (")[0])
+print()
 print("If all sizes print as the same value for a given struct, that is the")
 print("kernel's real size. Compare with the trigger's fallback layouts:")
 print("  negotiate 528, setup 336, share 160, create 136, vc_properties 576")
