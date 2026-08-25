@@ -175,10 +175,15 @@ _Static_assert(sizeof(struct smbioc_vc_properties) == 576, "vc props size");
 #define SMB2IOC_CREATE      _IOWR('n', 120, struct smb2ioc_create)
 
 static int open_nsmb(void) {
-    for (int i = 1; i < 1024; i++) {
+    /* clone device first (macOS creates a private minor on first open) */
+    int fd = open("/dev/nsmb", O_RDWR);
+    if (fd >= 0)
+        return fd;
+    /* fall back: scan minors 0..1023 */
+    for (int i = 0; i < 1024; i++) {
         char path[64];
         snprintf(path, sizeof(path), "/dev/nsmb%d", i);
-        int fd = open(path, O_RDONLY);
+        fd = open(path, O_RDWR);
         if (fd >= 0)
             return fd;
     }
