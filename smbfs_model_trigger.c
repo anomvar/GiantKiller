@@ -209,8 +209,8 @@ int main(int argc, char **argv) {
     neg.ioc_version = SMB_IOC_STRUCT_VERSION;
     strncpy(neg.ioc_ssn.ioc_srvname, server, sizeof(neg.ioc_ssn.ioc_srvname) - 1);
     int r = ioctl(fd, SMBIOC_NEGOTIATE, &neg);
-    printf("[*] NEGOTIATE ret=%d ntstatus=0x%x caps=0x%x\n",
-           r, neg.ioc_ntstatus, neg.ioc_ret_caps);
+    printf("[*] NEGOTIATE ret=%d errno=%d (%s) ntstatus=0x%x caps=0x%x\n",
+           r, errno, strerror(errno), neg.ioc_ntstatus, neg.ioc_ret_caps);
     if (r != 0) { printf("[-] negotiate failed\n"); return 1; }
 
     struct smbioc_setup ss;
@@ -218,7 +218,7 @@ int main(int argc, char **argv) {
     ss.ioc_version = SMB_IOC_STRUCT_VERSION;
     strcpy(ss.ioc_domain, "WORKGROUP");
     r = ioctl(fd, SMBIOC_SSNSETUP, &ss);
-    printf("[*] SSNSETUP ret=%d\n", r);
+    printf("[*] SSNSETUP ret=%d errno=%d (%s)\n", r, errno, strerror(errno));
     if (r != 0) { printf("[-] session setup failed\n"); return 1; }
 
     struct smbioc_share tcon;
@@ -226,7 +226,7 @@ int main(int argc, char **argv) {
     tcon.ioc_version = SMB_IOC_STRUCT_VERSION;
     strncpy(tcon.ioc_share, share, sizeof(tcon.ioc_share) - 1);
     r = ioctl(fd, SMBIOC_TCON, &tcon);
-    printf("[*] TCON ret=%d\n", r);
+    printf("[*] TCON ret=%d errno=%d (%s)\n", r, errno, strerror(errno));
     if (r != 0) { printf("[-] tree connect failed\n"); return 1; }
 
     struct smb2ioc_create cr;
@@ -240,7 +240,8 @@ int main(int argc, char **argv) {
     cr.ioc_share_access = 1 | 2 | 4;
     cr.ioc_disposition = 1;               /* FILE_OPEN */
     r = ioctl(fd, SMB2IOC_CREATE, &cr);
-    printf("[*] CREATE ret=%d ntstatus=0x%x\n", r, cr.ioc_ret_ntstatus);
+    printf("[*] CREATE ret=%d errno=%d (%s) ntstatus=0x%x\n",
+           r, errno, strerror(errno), cr.ioc_ret_ntstatus);
     if (r != 0 && cr.ioc_ret_ntstatus != 0)
         printf("[-] create failed ntstatus=0x%x\n", cr.ioc_ret_ntstatus);
 
@@ -253,9 +254,9 @@ int main(int argc, char **argv) {
     frame.guard = 0xDEADBEEFDEADBEEFULL;
 
     r = ioctl(fd, SMBIOC_VC_PROPERTIES, &frame.p);
-    printf("[*] VC_PROPERTIES ret=%d misc_flags=0x%llx "
+    printf("[*] VC_PROPERTIES ret=%d errno=%d (%s) misc_flags=0x%llx "
            "returned_model_len=%lu\n",
-           r, (unsigned long long)frame.p.misc_flags,
+           r, errno, strerror(errno), (unsigned long long)frame.p.misc_flags,
            (unsigned long)strlen(frame.p.model_info));
 
     if (frame.guard != 0xDEADBEEFDEADBEEFULL) {
