@@ -22,6 +22,7 @@
  * Run:    ./smbfs_model_trigger <server> <share> [name]
  *         e.g. ./smbfs_model_trigger 0.tcp.in.ngrok.io share hello.txt
  */
+#include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
